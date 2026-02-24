@@ -182,28 +182,92 @@ class DinoLinkTokenDETR(nn.Module):
         pad = tokens.new_zeros((b, q - k, c))
         return torch.cat([tokens, pad], dim=1)
 
-    def _head_forward(self, tokens_3d: torch.Tensor) -> Dict[str, torch.Tensor]:
-        hs = self.token_proj(tokens_3d).unsqueeze(0)  # (1,B,Q,C)
+
+    # def _head_forward(self, tokens_3d: torch.Tensor) -> Dict[str, torch.Tensor]:
+    #     hs = self.token_proj(tokens_3d).unsqueeze(0)  # (1,B,Q,C)
+    #     outputs_class = self.detr.class_embed(hs)
+    #     outputs_coord = self.detr.bbox_embed(hs).sigmoid()
+    #     out: Dict[str, torch.Tensor] = {
+    #         "pred_logits": outputs_class[-1],
+    #         "pred_boxes": outputs_coord[-1],
+    #     }
+    #     if self.aux_loss:
+    #         out["aux_outputs"] = [
+    #             {"pred_logits": a, "pred_boxes": b}
+    #             for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+    #         ]
+    #     return out
+
+    # def forward(self, samples: NestedTensor | torch.Tensor | list[torch.Tensor]) -> Dict[str, torch.Tensor]:
+    #     img = self._to_images(samples)
+    #     decoded_tokens, _ = self._run_dinolink(img)
+    #     query_tokens = self._fit_num_queries(decoded_tokens)
+    #     return self._head_forward(query_tokens)
+
+    def _head_forward(self, tokens_3d: torch.Tensor, samples: NestedTensor) -> Dict[str, torch.Tensor]:
+        # 1. 准备 DinoLink Content Queries: [B, Q, C] -> [Q, B, C]
+        content_queries = self.token_proj(tokens_3d).transpose(0, 1)
+        
+        # 2. 获取图像特征
+        features, pos = self.detr.backbone(samples)
+        src, mask = features[-1].decompose()
+        
+        # --- 关键修复：展平 2D 特征图为序列格式 ---
+        # src: [B, C, H, W] -> [H*W, B, C]
+        # pos: [B, C, H, W] -> [H*W, B, C]
+        # mask: [B, H, W] -> [B, H*W]
+        
+        b, c, h, w = src.shape
+        # input_proj 是 Conv2d，必须先在 4D 特征图上做通道映射
+        src_proj_2d = self.detr.input_proj(src)
+        src_proj = src_proj_2d.flatten(2).permute(2, 0, 1)
+        pos_flattened = pos[-1].flatten(2).permute(2, 0, 1)
+        mask_flattened = mask.flatten(1)
+        # ---------------------------------------
+
+        # 3. 调用 Transformer Encoder
+        memory = self.detr.transformer.encoder(
+            src_proj, 
+            src_key_padding_mask=mask_flattened, 
+            pos=pos_flattened
+        )
+        
+        # 4. 准备 Position Queries: [Q, B, C]
+        query_embed = self.detr.query_embed.weight.unsqueeze(1).repeat(1, b, 1)
+        
+        # 5. 调用 Transformer Decoder
+        hs = self.detr.transformer.decoder(
+            tgt=content_queries, 
+            memory=memory,
+            memory_key_padding_mask=mask_flattened,
+            pos=pos_flattened,
+            query_pos=query_embed
+        )
+        
+        # hs: [Layers, Q, B, C] -> [Layers, B, Q, C]
+        hs = hs.transpose(1, 2)
+
+        # 6. 检测头输出
         outputs_class = self.detr.class_embed(hs)
         outputs_coord = self.detr.bbox_embed(hs).sigmoid()
-        out: Dict[str, torch.Tensor] = {
-            "pred_logits": outputs_class[-1],
-            "pred_boxes": outputs_coord[-1],
-        }
+        
+        out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
         if self.aux_loss:
-            out["aux_outputs"] = [
-                {"pred_logits": a, "pred_boxes": b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
-            ]
+            out["aux_outputs"] = [{"pred_logits": a, "pred_boxes": b} 
+                                 for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
         return out
 
     def forward(self, samples: NestedTensor | torch.Tensor | list[torch.Tensor]) -> Dict[str, torch.Tensor]:
+        if not isinstance(samples, NestedTensor):
+            samples = nested_tensor_from_tensor_list(samples)
+            
         img = self._to_images(samples)
         decoded_tokens, _ = self._run_dinolink(img)
         query_tokens = self._fit_num_queries(decoded_tokens)
-        return self._head_forward(query_tokens)
-
-
+        
+        # 传入 samples 以获取 backbone 特征
+        return self._head_forward(query_tokens, samples)
+        
 def build_dinolink_token_model(args):
     if getattr(args, "masks", False):
         raise ValueError("DinoLink token path currently supports box detection only (no --masks).")
