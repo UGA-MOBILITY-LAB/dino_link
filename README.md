@@ -111,7 +111,6 @@ Test 会：加载权重 -> 全模型 `eval()` -> 跑一遍数据算 token/VQ 指
 
 **总结**：评估完全基于「token 重建质量 + VQ 损失 + 码本利用情况」，没有引入下游任务或 FID。
 
-## Data
 
 ### 本地 / 相对路径
 
@@ -122,34 +121,6 @@ Place images under `data_root` (or override with `--data_root`):
 - **COCO**: `data_root/train2017/` or `data_root/val2017/`
 
 If the path does not exist, the script falls back to dummy tensors for a quick sanity run.
-
-### 使用 NAS 上的数据（如 `\\172.22.112.85\home\Files\Lab\nuscenes\Test\samples`）
-
-1. **在 Linux/WSL 上挂载 NAS**（SMB）：
-
-   ```bash
-   # 安装（若无）
-   sudo apt-get install cifs-utils
-
-   sudo mkdir -p /mnt/nas_home
-   sudo mount -t cifs "//172.22.112.85/home" /mnt/nas_home -o username=你的用户名,uid=$(id -u),gid=$(id -g),vers=3.0
-   # 按提示输入 NAS 密码
-   ```
-
-   挂载后，Test 数据在：`/mnt/nas_home/Files/Lab/nuscenes/Test`（该目录下应有 `samples/CAM_FRONT` 等）。
-
-2. **用 `--data_root` 指定挂载路径**（指向包含 `samples` 的目录，即 `Test`）：
-
-   ```bash
-   python main.py --config configs/config.yaml --mode train --run_name nuscenes_test \
-     --data_root /mnt/nas_home/Files/Lab/nuscenes/Test
-   ```
-
-   程序会在 `data_root/samples/CAM_FRONT` 下找图片；若你的目录是 `Test/samples` 且下面直接是 `CAM_FRONT` 等，则 `data_root` 填到 `Test` 即可。
-
-3. 用完后卸载：`sudo umount /mnt/nas_home`
-
-项目里另有 `mount_nas.sh` 模板，可改成你的用户名后执行以挂载。
 
 ## VQ 压缩有效性 (Compression effectiveness)
 

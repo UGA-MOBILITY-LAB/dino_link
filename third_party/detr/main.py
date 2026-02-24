@@ -187,6 +187,15 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
         checkpoint_state = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
+        # When using DinoLink wrapper, model keys are typically prefixed with "detr."
+        # while plain DETR checkpoints are not. Auto-adapt key names for compatibility.
+        if getattr(args, "use_dinolink_tokens", False):
+            model_keys = model_without_ddp.state_dict().keys()
+            has_wrapped_keys = any(k.startswith("detr.") for k in model_keys)
+            has_plain_ckpt_keys = any(not k.startswith("detr.") for k in checkpoint_state.keys())
+            if has_wrapped_keys and has_plain_ckpt_keys:
+                checkpoint_state = {f"detr.{k}": v for k, v in checkpoint_state.items()}
+                print("Adjusted resume checkpoint keys by adding 'detr.' prefix for DinoLink wrapper.")
         try:
             model_without_ddp.load_state_dict(checkpoint_state)
         except RuntimeError as e:

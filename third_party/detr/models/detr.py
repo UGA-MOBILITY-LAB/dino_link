@@ -126,6 +126,9 @@ class SetCriterion(nn.Module):
         if log:
             # TODO this should probably be a separate loss, not hacked in this one here
             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
+            # Percentage of queries whose top-1 prediction is the no-object class.
+            pred_classes = src_logits.argmax(-1)
+            losses['pred_noobj_ratio'] = (pred_classes == self.num_classes).float().mean() * 100.0
         return losses
 
     @torch.no_grad()
