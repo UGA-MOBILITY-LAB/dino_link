@@ -1,0 +1,8 @@
+# DinoLink runtime dependencies
+torch
+torchvision
+transformers>=4.30.0
+pyyaml>=5.1
+matplotlib
+numpy
+Pillow

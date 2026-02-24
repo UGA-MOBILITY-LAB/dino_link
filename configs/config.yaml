@@ -1,0 +1,66 @@
+# DinoLink: DINOv2 token extraction + selection + VQ
+# Model & selection (dinov2_name: base | large | giant)
+# dinov2_name 可改为 facebook/dinov2-with-registers-base 获得更干净的 attention（少 artifact）
+# dinov2_image_size: 224 → 256 patches; 448 → 1024 patches（更吃显存）
+# top_k: 选中的 token 数。latent grid 自动 = patch grid (image_size/14)^2
+#   256px → ~18×18=324 patches; 448px → 32×32=1024 patches
+#   top_k < 总 patch 数时，选中位置放 VQ token，其余位置填 0
+model:
+  dinov2_name: "facebook/dinov2-with-registers-base"
+  dinov2_image_size: 448
+  top_k: 100000  # effectively "all tokens" (clamped to current patch count)
+  selection: "attention"
+
+# Quantizer
+# z_dim: VQ 瓶颈维度。越接近 hidden_size(768) 信息损失越小，但压缩率降低
+# codebook_size: 越大表达力越强，但可能利用率低
+quantizer:
+  type: "rvq"    # "vq" | "rvq"
+  codebook_size: 768
+  z_dim: 64
+  num_quantizers: 2  # only for rvq
+
+# Decoder: TokenDecoder
+# 每个 VQ token 直接解码回 DINO token 空间（hidden_size）
+decoder:
+  type: "token"
+  hidden_dim: 768               # token decoder 的 MLP 隐层维度
+  use_pos: true                 # 拼接 (row, col) 位置先验到 decoder 输入
+
+# Data (本地 CAM_FRONT 目录)
+# image_size: 与 model.dinov2_image_size 一致时才是真正高分辨率
+# image_size: null → 原图送入，显存易 OOM（ViT attention O(N^2)）；224 安全，448 需更多显存
+data:
+  dataset: "nuscenes"   # "nuscenes" | "waymo" | "coco" (fallback)
+  # data_root: "/mnt/datasets/nuScenes/sweeps/CAM_FRONT/"
+  data_root: "/mnt/datasets/nuScenes/"
+  # data_root: "/home/tianle/dinolink_project/v1.0-mini"
+  test_data_root: null  # optional: separate root for test (default: data_root)
+  multi_view: false     # true: load 6 cameras (FRONT/FRONT_LEFT/FRONT_RIGHT/BACK/BACK_LEFT/BACK_RIGHT)
+  image_size: null      # no resize in DinoLink extractor; token grid follows input resolution
+  batch_size: 4     
+  num_workers: 4    
+
+# Training / run
+
+# token_weight: token 重建损失权重，默认 1.0
+run:
+  epochs: 30
+  lr: 2.0e-4
+  beta: 0.3
+  codebook_lr: 2.0e-3
+  codebook_momentum: 0.5
+  # Token reconstruction loss switched to Logit-Laplace NLL.
+  token_l2_weight: 1.0
+  token_logit_laplace_weight: 0.1
+  logit_laplace_scale: 1.0
+  logit_laplace_eps: 1.0e-6
+  # VQ only: periodic K-means refresh for codebook (0 = disable)
+  codebook_kmeans_every: 400
+  codebook_kmeans_iters: 15
+  codebook_kmeans_samples: 8192   # 0=use all current-step z_enc, >0=random subsample
+  token_weight: 1.0
+  save_visuals: false    # false: do not save attention/selection/token-matrix figures
+  log_dir: "logs"
+  save_every: 5      
+  seed: 42
