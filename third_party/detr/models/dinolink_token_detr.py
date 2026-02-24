@@ -32,32 +32,102 @@ class DinoLinkTokenDETR(nn.Module):
 
         # Make project root importable so we can reuse DinoLink modules.
         project_root = Path(__file__).resolve().parents[3]
-        import sys
-        if str(project_root) not in sys.path:
-            sys.path.insert(0, str(project_root))
+        import importlib.util
 
-        from main import build_model as build_dinolink_model  # type: ignore
+        def _load_symbol(module_rel_path: str, symbol: str):
+            module_path = project_root / module_rel_path
+            spec = importlib.util.spec_from_file_location(
+                f"dinolink_{module_path.stem}", module_path
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"Failed to load module from {module_path}")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return getattr(mod, symbol)
+
+        DINOv2Extractor = _load_symbol("models/dinov2_extractor.py", "DINOv2Extractor")
+        TokenSelector = _load_symbol("models/token_selector.py", "TokenSelector")
+        Projector = _load_symbol("models/projector.py", "Projector")
+        VQ = _load_symbol("models/quantizer.py", "VQ")
+        RVQ = _load_symbol("models/quantizer.py", "RVQ")
+        TokenDecoder = _load_symbol("models/decoder.py", "TokenDecoder")
 
         import yaml
         with open(dinolink_cfg, "r") as f:
             cfg = yaml.safe_load(f)
 
-        modules = build_dinolink_model(cfg, device=torch.device("cpu"))
-        self.extractor = modules["extractor"]
-        self.selector = modules["selector"]
-        self.projector = modules["projector"]
-        self.quantizer = modules["quantizer"]
-        self.token_decoder = modules["token_decoder"]
-        self.z_dim = int(modules["z_dim"])
+        model_cfg = cfg["model"]
+        quant_cfg = cfg["quantizer"]
+        dec_cfg = cfg.get("decoder", {})
+
+        top_k = int(model_cfg["top_k"])
+        selection = model_cfg.get("selection", "attention")
+        dinov2_name = model_cfg["dinov2_name"]
+        dinov2_image_size = model_cfg.get("dinov2_image_size", 224)
+
+        self.extractor = DINOv2Extractor(
+            dinov2_name,
+            image_size=dinov2_image_size,
+        )
+        nh = self.extractor.num_patches_h if self.extractor.num_patches_h is not None else 16
+        nw = self.extractor.num_patches_w if self.extractor.num_patches_w is not None else 16
+        hidden_size = int(self.extractor.hidden_size)
+
+        self.selector = TokenSelector(
+            top_k=top_k,
+            mode=selection,
+            num_patches_h=nh,
+            num_patches_w=nw,
+        )
+
+        self.z_dim = int(quant_cfg["z_dim"])
+        self.projector = Projector(hidden_size, self.z_dim)
+
+        quant_type = quant_cfg["type"]
+        if quant_type == "rvq":
+            self.quantizer = RVQ(
+                quant_cfg["codebook_size"],
+                self.z_dim,
+                quant_cfg.get("num_quantizers", 2),
+            )
+        elif quant_type == "vq":
+            self.quantizer = VQ(quant_cfg["codebook_size"], self.z_dim)
+        else:
+            raise ValueError(f"Unsupported quantizer.type: {quant_type}")
+
+        self.token_decoder = TokenDecoder(
+            z_dim=self.z_dim,
+            out_dim=hidden_size,
+            hidden_dim=dec_cfg.get("hidden_dim", 512),
+            use_pos=dec_cfg.get("use_pos", True),
+        )
+
+        def _safe_load_module(module: nn.Module, state_dict: Dict[str, torch.Tensor], name: str) -> None:
+            """Load only shape-matching tensors so mismatched ckpts can still run."""
+            current = module.state_dict()
+            matched: Dict[str, torch.Tensor] = {}
+            skipped = []
+            for k, v in state_dict.items():
+                if k in current and current[k].shape == v.shape:
+                    matched[k] = v
+                else:
+                    skipped.append(k)
+            missing, unexpected = module.load_state_dict(matched, strict=False)
+            if skipped:
+                print(f"[DinoLinkTokenDETR] {name}: skipped {len(skipped)} mismatched keys.")
+            if missing:
+                print(f"[DinoLinkTokenDETR] {name}: missing {len(missing)} keys after partial load.")
+            if unexpected:
+                print(f"[DinoLinkTokenDETR] {name}: unexpected {len(unexpected)} keys in ckpt.")
 
         if dinolink_ckpt:
-            ckpt = torch.load(dinolink_ckpt, map_location="cpu")
+            ckpt = torch.load(dinolink_ckpt, map_location="cpu", weights_only=False)
             if "projector" in ckpt:
-                self.projector.load_state_dict(ckpt["projector"])
+                _safe_load_module(self.projector, ckpt["projector"], "projector")
             if "quantizer" in ckpt:
-                self.quantizer.load_state_dict(ckpt["quantizer"])
+                _safe_load_module(self.quantizer, ckpt["quantizer"], "quantizer")
             if "token_decoder" in ckpt:
-                self.token_decoder.load_state_dict(ckpt["token_decoder"])
+                _safe_load_module(self.token_decoder, ckpt["token_decoder"], "token_decoder")
 
         hidden_dim = int(self.detr.class_embed.in_features)
         token_dim = int(self.token_decoder.norm.normalized_shape[0])
