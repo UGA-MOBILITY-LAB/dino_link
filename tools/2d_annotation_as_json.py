@@ -13,6 +13,7 @@ Note: Projecting tight 3d boxes to 2d generally leads to non-tight boxes.
 import argparse
 import json
 import os
+import random
 from collections import OrderedDict
 from typing import List, Tuple, Union
 
@@ -180,9 +181,13 @@ def main(args):
             continue
         sample_data_camera_tokens.append(s["token"])
 
-    # For debugging purposes: Only produce the first n images.
+    # Limit to n images: random sample (not consecutive).
     if args.image_limit != -1:
-        sample_data_camera_tokens = sample_data_camera_tokens[:args.image_limit]
+        if getattr(args, 'seed', None) is not None:
+            random.seed(args.seed)
+        n = min(args.image_limit, len(sample_data_camera_tokens))
+        sample_data_camera_tokens = random.sample(sample_data_camera_tokens, n)
+        print(f"Randomly sampled {n} images (image_limit={args.image_limit}).")
 
     # Loop through the records and apply the re-projection algorithm.
     reprojections = []
@@ -218,7 +223,8 @@ if __name__ == '__main__':
     parser.add_argument('--filename', type=str, default='image_annotations.json', help='Output filename.')
     parser.add_argument('--visibilities', type=str, default=['', '1', '2', '3', '4'],
                         help='Visibility bins, the higher the number the higher the visibility.', nargs='+')
-    parser.add_argument('--image_limit', type=int, default=-1, help='Number of images to process or -1 to process all.')
+    parser.add_argument('--image_limit', type=int, default=-1, help='Number of images to process (random sample) or -1 to process all.')
+    parser.add_argument('--seed', type=int, default=None, help='Random seed for image_limit sampling (reproducible).')
     args = parser.parse_args()
 
     nusc = NuScenes(dataroot=args.dataroot, version=args.version)

@@ -6,7 +6,7 @@
 #   256px → ~18×18=324 patches; 448px → 32×32=1024 patches
 #   top_k < 总 patch 数时，选中位置放 VQ token，其余位置填 0
 model:
-  dinov2_name: "facebook/dinov2-with-registers-base"
+  dinov2_name: "facebook/dinov2-with-registers-large"
   dinov2_image_size: 448
   top_k: 100000  # effectively "all tokens" (clamped to current patch count)
   selection: "attention"
@@ -15,7 +15,8 @@ model:
 # z_dim: VQ 瓶颈维度。越接近 hidden_size(768) 信息损失越小，但压缩率降低
 # codebook_size: 越大表达力越强，但可能利用率低
 quantizer:
-  type: "rvq"    # "vq" | "rvq"
+  # type: "rvq"    # "vq" | "rvq"
+  type: "none"    # "vq" | "rvq"
   codebook_size: 768
   z_dim: 128
   num_quantizers: 2  # only for rvq

@@ -14,6 +14,24 @@ from datasets.coco_eval import CocoEvaluator
 from datasets.panoptic_eval import PanopticEvaluator
 
 
+def _extract_vq_eval_metrics(outputs):
+    """Convert model-provided VQ eval dict into scalar log metrics."""
+    if not isinstance(outputs, dict):
+        return {}
+    vq_eval = outputs.get("vq_eval")
+    if not isinstance(vq_eval, dict):
+        return {}
+    metrics = {}
+    for k, v in vq_eval.items():
+        if isinstance(v, torch.Tensor):
+            if v.numel() != 1:
+                continue
+            metrics[f"vq_{k}"] = float(v.detach().item())
+        elif isinstance(v, (float, int)):
+            metrics[f"vq_{k}"] = float(v)
+    return metrics
+
+
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0):
@@ -30,6 +48,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         outputs = model(samples)
+        vq_metrics = _extract_vq_eval_metrics(outputs)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -58,6 +77,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        if vq_metrics:
+            metric_logger.update(**vq_metrics)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
@@ -90,6 +111,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         outputs = model(samples)
+        vq_metrics = _extract_vq_eval_metrics(outputs)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
@@ -103,6 +125,8 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
                              **loss_dict_reduced_scaled,
                              **loss_dict_reduced_unscaled)
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
+        if vq_metrics:
+            metric_logger.update(**vq_metrics)
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results = postprocessors['bbox'](outputs, orig_target_sizes)
