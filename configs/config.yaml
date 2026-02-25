@@ -16,7 +16,7 @@ model:
 # codebook_size: 越大表达力越强，但可能利用率低
 quantizer:
   # type: "rvq"    # "vq" | "rvq"
-  type: "none"    # "vq" | "rvq"
+  type: "rvq"    # "vq" | "rvq"
   codebook_size: 768
   z_dim: 128
   num_quantizers: 2  # only for rvq

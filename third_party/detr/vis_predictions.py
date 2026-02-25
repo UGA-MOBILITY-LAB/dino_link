@@ -10,9 +10,11 @@ import argparse
 import os
 from pathlib import Path
 
+import numpy as np
 import torch
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from torch.utils.data import DataLoader
+from torchvision.utils import draw_bounding_boxes
 from tqdm import tqdm
 
 import datasets
@@ -20,23 +22,6 @@ import util.misc as utils
 from datasets import build_dataset
 from models import build_model
 from main import get_args_parser  # 复用官方的参数定义，避免缺少字段
-
-
-# COCO 80 class names (index 0 = person, ...)
-COCO_CLASSES = [
-    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
-    'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter',
-    'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear',
-    'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase',
-    'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat',
-    'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle',
-    'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
-    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut',
-    'cake', 'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet',
-    'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave',
-    'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase',
-    'scissors', 'teddy bear', 'hair drier', 'toothbrush',
-]
 
 
 def main():
@@ -56,10 +41,50 @@ def main():
 
     if args.resume:
         if args.resume.startswith('https'):
-            ckpt = torch.hub.load_state_dict_from_url(args.resume, map_location='cpu', check_hash=True)
+            checkpoint = torch.hub.load_state_dict_from_url(
+                args.resume, map_location='cpu', check_hash=True
+            )
         else:
-            ckpt = torch.load(args.resume, map_location='cpu')
-        model.load_state_dict(ckpt['model'])
+            checkpoint = torch.load(args.resume, map_location='cpu')
+
+        checkpoint_state = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
+
+        # When using DinoLink wrapper, model keys are prefixed with "detr." for the inner DETR.
+        # Only add "detr." prefix when loading a *plain* DETR checkpoint (no wrapper-specific keys),
+        # to avoid corrupting checkpoints that were saved from DinoLinkTokenDETR.
+        if getattr(args, "use_dinolink_tokens", False):
+            model_keys = list(model.state_dict().keys())
+            has_wrapped_keys = any(k.startswith("detr.") for k in model_keys)
+            ckpt_keys = list(checkpoint_state.keys())
+            has_plain_ckpt_keys = any(not k.startswith("detr.") for k in ckpt_keys)
+            wrapper_prefixes = (
+                "extractor.",
+                "selector.",
+                "projector.",
+                "token_proj.",
+                "token_decoder.",
+                "quantizer.",
+            )
+            ckpt_has_wrapper_keys = any(k.startswith(wrapper_prefixes) for k in ckpt_keys)
+            if has_wrapped_keys and has_plain_ckpt_keys and not ckpt_has_wrapper_keys:
+                checkpoint_state = {f"detr.{k}": v for k, v in checkpoint_state.items()}
+                print("Adjusted resume checkpoint keys by adding 'detr.' prefix for DinoLink wrapper.")
+
+        try:
+            model.load_state_dict(checkpoint_state)
+        except RuntimeError as e:
+            # Allow loading checkpoints with slightly different heads/backbones by
+            # only loading shape-matched tensors (same strategy as training script).
+            print(f"Strict checkpoint loading failed, falling back to shape-matched loading.\nError: {e}")
+            model_state = model.state_dict()
+            filtered_state = {
+                k: v for k, v in checkpoint_state.items()
+                if k in model_state and hasattr(v, "shape") and v.shape == model_state[k].shape
+            }
+            skipped = sorted(set(checkpoint_state.keys()) - set(filtered_state.keys()))
+            print(f"Loading shape-matched keys: {len(filtered_state)} / {len(model_state)}")
+            print(f"Skipped checkpoint keys: {len(skipped)}")
+            model.load_state_dict(filtered_state, strict=False)
 
     dataset_val = build_dataset(image_set='val', args=args)
     data_loader = DataLoader(
@@ -67,15 +92,23 @@ def main():
         collate_fn=utils.collate_fn, num_workers=args.num_workers,
     )
 
+    # Build a mapping from contiguous label id (what DETR uses) to category name
+    # using the SAME category id ordering as the training dataset.
+    # Many DETR-style datasets expose `cat_ids` that define this order.
+    if hasattr(dataset_val, "cat_ids"):
+        cat_ids = list(dataset_val.cat_ids)
+    else:
+        # Fallback: derive from COCO cat ids (may differ if a custom dataset changes the order)
+        cat_ids = sorted(dataset_val.coco.cats.keys())
+    id2name = {
+        idx: dataset_val.coco.cats[cat_id]["name"]
+        for idx, cat_id in enumerate(cat_ids)
+    }
+
     root = Path(args.coco_path)
     img_folder = root / "val2017"
     vis_dir = Path(args.vis_out_dir) if args.vis_out_dir else root / "vis_detr"
     vis_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-    except Exception:
-        font = None
 
     for batch in tqdm(data_loader, desc="Vis"):
         samples, targets = batch
@@ -100,22 +133,36 @@ def main():
             if not img_path.exists():
                 continue
             img = Image.open(img_path).convert("RGB")
-            draw = ImageDraw.Draw(img)
 
-            for box, score, label in zip(boxes, scores, labels):
-                if score < args.score_thr:
-                    continue
-                x1, y1, x2, y2 = box
-                draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
-                cls_name = COCO_CLASSES[int(label)] if int(label) < len(COCO_CLASSES) else f"c{label}"
-                text = f"{cls_name} {score:.2f}"
-                if font:
-                    draw.text((x1, y1 - 16), text, fill="red", font=font)
-                else:
-                    draw.text((x1, y1 - 14), text, fill="red")
+            # Filter by score and build label strings
+            keep = scores >= args.score_thr
+            boxes_keep = boxes[keep]
+            scores_keep = scores[keep]
+            labels_keep = labels[keep]
 
-            out_name = Path(file_name).name
-            img.save(vis_dir / out_name)
+            if len(boxes_keep) == 0:
+                img.save(vis_dir / Path(file_name).name)
+                continue
+
+            # Official torchvision drawing: image (C,H,W) uint8, boxes (N,4) xyxy
+            img_tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1)  # (H,W,3) -> (3,H,W)
+            boxes_tensor = torch.as_tensor(boxes_keep, dtype=torch.float)
+            label_strs = []
+            for score, label in zip(scores_keep, labels_keep):
+                lbl_idx = max(int(label) - 1, 0)
+                cls_name = id2name.get(lbl_idx, f"c{lbl_idx}")
+                label_strs.append(f"{cls_name} {score:.2f}")
+
+            out_tensor = draw_bounding_boxes(
+                img_tensor,
+                boxes_tensor,
+                labels=label_strs,
+                colors="red",
+                width=4,
+                font_size=22,
+            )
+            out_pil = Image.fromarray(out_tensor.permute(1, 2, 0).numpy())
+            out_pil.save(vis_dir / Path(file_name).name)
 
     print(f"Saved visualizations to {vis_dir}")
 

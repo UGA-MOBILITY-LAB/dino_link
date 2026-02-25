@@ -401,6 +401,9 @@ class DinoLinkTokenDETR(nn.Module):
         return out
 
     def forward(self, samples: NestedTensor | torch.Tensor | list[torch.Tensor]) -> Dict[str, torch.Tensor]:
+        if not getattr(self, "_dinolink_path_printed", False):
+            print("[DinoLinkTokenDETR] Forward path: image -> DinoLink -> DETR encoder/decoder -> detection heads.")
+            self._dinolink_path_printed = True
         if not isinstance(samples, NestedTensor):
             samples = nested_tensor_from_tensor_list(samples)
 

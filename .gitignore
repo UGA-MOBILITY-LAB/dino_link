@@ -2,3 +2,5 @@ logs/
 datasets/
 outputs/
 work_dirs/
+__pycache__/
+*.pyc
