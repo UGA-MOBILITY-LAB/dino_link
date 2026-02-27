@@ -23,6 +23,26 @@ from datasets import build_dataset
 from models import build_model
 from main import get_args_parser  # 复用官方的参数定义，避免缺少字段
 
+# High-contrast nuScenes-style palette (RGB tuples).
+NUSC_COLOR_PALETTE = [
+    (255, 99, 71),    # tomato
+    (30, 144, 255),   # dodger blue
+    (50, 205, 50),    # lime green
+    (255, 165, 0),    # orange
+    (147, 112, 219),  # medium purple
+    (0, 206, 209),    # dark turquoise
+    (255, 20, 147),   # deep pink
+    (255, 215, 0),    # gold
+    (0, 191, 255),    # deep sky blue
+    (124, 252, 0),    # lawn green
+    (255, 69, 0),     # orange red
+    (138, 43, 226),   # blue violet
+]
+
+
+def class_color(class_idx: int):
+    return NUSC_COLOR_PALETTE[class_idx % len(NUSC_COLOR_PALETTE)]
+
 
 def main():
     # 复用 main.py 里的 get_args_parser，确保和官方脚本参数完全一致
@@ -30,6 +50,8 @@ def main():
     parser.add_argument('--vis_out_dir', type=str, default=None,
                         help='Directory to save visualization images (default: coco_path/vis_detr)')
     parser.add_argument('--score_thr', type=float, default=0.5, help='Min score to draw box')
+    parser.add_argument('--box_width', type=int, default=5, help='Bounding box line width')
+    parser.add_argument('--font_size', type=int, default=30, help='Label font size')
     args = parser.parse_args()
 
     device = torch.device(args.device)

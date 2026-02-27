@@ -202,6 +202,23 @@ class DinoLinkTokenDETR(nn.Module):
         col_norm = (cols.float() / max(npw - 1, 1)) * 2.0 - 1.0
         patch_pos = torch.stack([row_norm, col_norm], dim=-1)
         decoded_tokens = self.token_decoder(z_q_st, patch_pos=patch_pos)
+
+        num_patches_total = nph * npw
+        bits_pos = math.ceil(math.log2(max(num_patches_total, 2)))
+        if self.quantizer is not None:
+            cb_size = int(getattr(self.quantizer, "codebook_size", 2))
+            num_q = int(getattr(self.quantizer, "num_quantizers", 1))
+            bits_code = math.ceil(math.log2(max(cb_size, 2))) * num_q
+            vq_eval["transmission_bits"] = float(k * (bits_code + bits_pos))
+        else:
+            bits_token = self.z_dim * 32
+            vq_eval["transmission_bits"] = float(k * (bits_token + bits_pos))
+
+        # Extra fields for visualization/debugging (ignored by loss & metrics helpers).
+        vq_eval["nph"] = float(nph)
+        vq_eval["npw"] = float(npw)
+        vq_eval["selected_indices"] = selected_indices.detach()
+
         return decoded_tokens, selected_indices, nph, npw, vq_eval
 
     # NOTE: Dead code (kept commented for reference).

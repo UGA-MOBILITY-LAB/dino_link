@@ -63,7 +63,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=100, type=int,
+    parser.add_argument('--num_queries', default=30, type=int,
                         help="Number of query slots")
     parser.add_argument('--pre_norm', action='store_true')
 
@@ -75,7 +75,7 @@ def get_args_parser():
     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
                         help="Disables auxiliary decoding losses (loss at each layer)")
     # * Matcher
-    parser.add_argument('--set_cost_class', default=1, type=float,
+    parser.add_argument('--set_cost_class', default=5, type=float,
                         help="Class coefficient in the matching cost")
     parser.add_argument('--set_cost_bbox', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
@@ -94,6 +94,13 @@ def get_args_parser():
     parser.add_argument('--coco_path', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
+    parser.add_argument(
+        '--input_codec',
+        default='RAW',
+        type=str,
+        choices=['RAW', 'JPEG_Q100', 'JPEG_Q90', 'JPEG_Q80'],
+        help='Optional input recompression before preprocessing. RAW keeps original image.'
+    )
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
