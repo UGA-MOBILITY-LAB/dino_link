@@ -98,7 +98,7 @@ def get_args_parser():
         '--input_codec',
         default='RAW',
         type=str,
-        choices=['RAW', 'JPEG_Q100', 'JPEG_Q90', 'JPEG_Q80'],
+        choices=['RAW', 'JPEG_Q100', 'JPEG_Q90', 'JPEG_Q80', 'WEBP_Q90', 'WEBP_Q80'],
         help='Optional input recompression before preprocessing. RAW keeps original image.'
     )
 
@@ -192,7 +192,7 @@ def main(args):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
-            checkpoint = torch.load(args.resume, map_location='cpu')
+            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         checkpoint_state = checkpoint["model"] if isinstance(checkpoint, dict) and "model" in checkpoint else checkpoint
         # When using DinoLink wrapper, model keys are prefixed with "detr." for the inner DETR.
         # Only add "detr." prefix when loading a *plain* DETR checkpoint (no wrapper keys).

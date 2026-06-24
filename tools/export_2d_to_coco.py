@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-将 nuScenes devkit 导出的 2D 标注（image_annotations.json）转为 COCO 格式。
+Convert the 2D annotations (image_annotations.json) exported by the nuScenes devkit to COCO format.
 
-输入：image_annotations.json（每条含 filename, bbox_corners [x1,y1,x2,y2], category_name）
-输出：COCO 格式 JSON（images, annotations, categories），bbox 为 [x, y, w, h]。
+Input: image_annotations.json (each entry contains filename, bbox_corners [x1,y1,x2,y2], category_name)
+Output: COCO format JSON (images, annotations, categories), with bbox as [x, y, w, h].
 """
 
 import argparse
@@ -46,13 +46,13 @@ def main():
         type=str,
         choices=("original", "basename"),
         default="original",
-        help="original: file_name 使用原始路径 samples/CAM_FRONT/xxx.jpg; basename: prefix+文件名.",
+        help="original: file_name uses the original path samples/CAM_FRONT/xxx.jpg; basename: prefix+filename.",
     )
     parser.add_argument(
         "--file-name-prefix",
         type=str,
         default="images/",
-        help="仅当 --file-name-style=basename 时有效; file_name = prefix + basename.",
+        help="Only effective when --file-name-style=basename; file_name = prefix + basename.",
     )
     args = parser.parse_args()
 
@@ -66,14 +66,14 @@ def main():
     with open(json_path, "r") as f:
         ann_list = json.load(f)
 
-    # 收集唯一 filename -> image_id（按出现顺序稳定）
+    # Collect unique filename -> image_id (stable in order of appearance)
     filename_to_id = OrderedDict()
     for ann in ann_list:
         fn = ann["filename"]
         if fn not in filename_to_id:
             filename_to_id[fn] = len(filename_to_id) + 1
 
-    # 收集唯一 category_name -> category_id
+    # Collect unique category_name -> category_id
     name_to_cat_id = OrderedDict()
     for ann in ann_list:
         name = ann.get("category_name", "unknown")

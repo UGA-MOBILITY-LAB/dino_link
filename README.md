@@ -1,134 +1,128 @@
 # DinoLink
 
-DINOv2 token extraction → Top-K / attention-based selection → VQ / EMA-VQ → Decoder.
+**A Token-Centric Representation Compression Framework for Bandwidth-Constrained Collaborative V2X Perception**
 
-**详细流程说明**（数据→模型→损失→训练/测试）见 **[PROJECT_FLOW.md](PROJECT_FLOW.md)**。
+<p align="center">
+  <img alt="Conference" src="https://img.shields.io/badge/IROS-2026-blue.svg">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.8%2B-brightgreen.svg">
+  <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-EE4C2C.svg?logo=pytorch&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-lightgrey.svg">
+</p>
 
-## Structure
+> Tianle Zhu\*, Haohua Que\*, Handong Yao†, Hongyi Xu, Zhipeng Bao — *Accepted to **IROS 2026***
+> <sub>\* Equal contribution &nbsp;·&nbsp; † Corresponding author</sub>
+
+---
+
+## Overview
+
+V2X collaborative perception is bottlenecked by bandwidth: human-centric codecs (JPEG/H.264) destroy machine-vision semantics, while raw Float32 feature maps are *larger* than the original images.
+
+**DinoLink** replaces pixel streaming with **discrete semantic communication** via a **dual-sparsity funnel**:
+
+1. **Spatial sparsity** — a *Saliency-Aware Top-K Selector* prunes redundant background tokens.
+2. **Bit-level sparsity** — a *Residual Vector Quantization (RVQ)* module collapses surviving features into compact codebook indices.
+
+Transmitting only integer indices + positional priors yields a **139× bitrate reduction** (~1.9 KB/image, 0.021 BPP) at a competitive **32.8% mAP** on nuScenes, with up to **34.5× lower end-to-end latency** in narrow-band links (LoRa, 2G).
+
+**Pipeline:** edge vehicle `(frozen DINOv2 → Top-K selection → RVQ indices)` → V2X link → cloud `(de-quantize → token decoder → DETR backend)`. The DINOv2 encoder stays frozen; the projector, RVQ codebooks, token decoder, and (optionally) the downstream head are trained.
+
+---
+
+## Key Results
+
+On **nuScenes** (5,000 surround-view images projected to 2D COCO boxes, 10 classes, seed 42), DETR as downstream detector:
+
+| Method | BPP ↓ | mAP ↑ | mAP₅₀ ↑ |
+|---|---|---|---|
+| JPEG (Q100) | 2.641 | 38.8% | 69.2% |
+| WebP (Q80) | 0.452 | 38.1% | 69.0% |
+| DINO (no comp.) | 2.920 | 38.8% | 69.2% |
+| **DinoLink (RVQ)** | **0.021** | 32.8% | 63.0% |
+
+- **Top-K ratio:** 90% is Pareto-optimal (0.019 BPP, 32.4% mAP).
+- **RVQ codebook:** size 768 is the sweet spot (61.2% utilization, 32.8% mAP).
+- **Latency:** 349.6 s → 10.1 s on LoRa (34.5×); near real-time (~0.07 s) on 5G/WiFi.
+- A real-world LAN deployment matches WebP/JPEG accuracy at **500–1000× lower bandwidth**.
+
+---
+
+## Installation
+
+```bash
+git clone <your-repo-url> dinolink_project
+cd dinolink_project
+pip install -r requirements.txt
+```
+
+Requires `torch`, `torchvision`, `transformers>=4.30.0`, `pyyaml`, `matplotlib`, `numpy`, `Pillow`. The DINOv2 backbone is downloaded automatically via Hugging Face on first use.
+
+---
+
+## Repository Structure
 
 ```
 dinolink_project/
-├── main.py                 # Entry point
-├── configs/
-│   └── config.yaml         # Model (TopK=100, Codebook=512), data, run
-├── models/
-│   ├── dinov2_extractor.py # DINOv2 token extractor
-│   ├── token_selector.py   # Top-K or attention-based selection
-│   ├── quantizer.py        # VQ / EMA-VQ
-│   └── decoder.py          # TokenDecoder: z_q -> DINO token
-├── utils/
-│   ├── image_loader.py    # nuScenes / Waymo / COCO image loader
-│   └── visualizer.py      # Attention / selection / token metric matrices
-└── logs/
-    └── run_xx/            # Per-run: metrics, figs, ckpts
+├── main.py                       # DinoLink entry point (token compression train/test)
+├── configs/config.yaml           # Model / quantizer / decoder / data / run config
+├── models/                       # DINOv2 extractor, Top-K selector, projector, RVQ, decoder
+├── losses/losses.py              # L2 + Logit-Laplace + commitment losses
+├── utils/                        # Dataset loaders & visualizers
+├── tools/                        # Latency sim, COCO export, Pareto/convergence plots
+├── third_party/detr/             # DETR backend integrated with DinoLink tokens
+└── logs/                         # Per-run metrics, figures, checkpoints
 ```
 
-## Config
+---
 
-Edit `configs/config.yaml`:
+## Usage
 
-- **model**: `top_k`, `selection`, `dinov2_name`, `dinov2_image_size`  
-  - 若 attention map 效果差：可试 `dinov2_name: "facebook/dinov2-with-registers-base"`（需 transformers 较新版本）；热力图已用 98 百分位缩放以增强对比。
-- **quantizer**: `type` (vq / rvq), `codebook_size`, `z_dim`
-- **decoder**: `type` (token), `hidden_dim`, `use_pos`
-- **data**: `dataset` (nuscenes / waymo / coco), `data_root`, `batch_size`
-- **run**: `epochs`, `lr`, `token_weight`, `beta`, `entropy_weight`, `log_dir`, `save_every`
-
-### 增加 patch token 个数
-
-- **候选 patch 总数**：由 `model.dinov2_image_size` 决定。224 → 16×16=256 个 patch；448 → 32×32=1024 个 patch（显存占用更大）。
-- **实际使用的 token 数**：`min(model.top_k, N)`，其中 `N` 是候选 patch 总数。
-- 若要**更多 token**（例如 256 个）：直接将 `model.top_k: 256`。可选同时设 `dinov2_image_size: 448` 以从更多 patch 里做 top-k。
-
-## Run
-
-### Training
-
-From project root:
+**1. Train the token compressor** (edit `configs/config.yaml` first — DINOv2 variant, Top-K, RVQ codebook, dataset root):
 
 ```bash
-cd dinolink_project
-python main.py --config configs/config.yaml --mode train
+python main.py --config configs/config.yaml --mode train --run_name my_run
 ```
 
-Optional: `--run_name my_run` to set log subdir (default: `run_YYYYmmdd_HHMMSS`).  
-Checkpoints are saved under `logs/{run_name}/checkpoints/ckpt_epoch{N}.pt`.
+Checkpoints → `logs/{run_name}/checkpoints/`, metrics → `logs/{run_name}/metrics.txt`.
 
-### Test (evaluate with checkpoint)
-
-**方式一：指定 checkpoint 路径**
+**2. Evaluate a checkpoint:**
 
 ```bash
-python main.py --config configs/config.yaml --mode test --ckpt logs/run_xxx/checkpoints/ckpt_epoch10.pt
+python main.py --config configs/config.yaml --mode test \
+  --ckpt logs/my_run/checkpoints/ckpt_epoch30.pt
 ```
 
-**方式二：用 run_name + epoch 号（不写则用最新）**
+Reports token reconstruction (`token_cos_sim`) and RVQ effectiveness (`vq_utilization`, `vq_perplexity`, `vq_quant_error`).
+
+**3. Downstream detection with the DETR backend** (consumes DinoLink tokens as queries):
 
 ```bash
-# 用 run_xxx 下 epoch 10 的 ckpt
-python main.py --config configs/config.yaml --mode test --run_name run_xxx --ckpt_epoch 10
-
-# 用 run_xxx 下按时间最新的 ckpt
-python main.py --config configs/config.yaml --mode test --run_name run_xxx
+cd third_party/detr
+python main.py --dataset_file coco --coco_path /path/to/nuscenes_coco \
+  --use_dinolink_tokens \
+  --dinolink_cfg ../../configs/config.yaml \
+  --dinolink_ckpt ../../logs/my_run/checkpoints/ckpt_epoch30.pt \
+  --freeze_dinolink --output_dir outputs/dinolink_detr
 ```
 
-Test 会：加载权重 -> 全模型 `eval()` -> 跑一遍数据算 token/VQ 指标 -> 写入 `logs/{run_name}/test_metrics.txt` 并保存 attention、selection、token metric matrices。
+Add `--eval` to evaluate, or `--no_freeze_dinolink` to fine-tune DinoLink jointly with DETR.
 
-## 评估方式 (Evaluation)
+**4. Reproduce paper analyses:** `tools/export_2d_to_coco.py` (build benchmark), `tools/sim_latency.py` (Fig. 5), `tools/plot_token_pareto.py` (Fig. 4).
 
-运行（训练或测试）时，每个 batch 会走一遍：**DINOv2 提 token → Top-K 选择 → 投影 → VQ 量化 → 解码重建**，并计算下面这些指标（在 `run_step` 里算，训练时每 epoch 平均后打印并写入 `metrics.txt`，测试时全量数据平均后打印并写入 `test_metrics.txt`）。
+---
 
-### 1. Token 重建与损失
+## Citation
 
-| 指标 | 含义 | 计算方式 |
-|------|------|----------|
-| **token_loss** | token 重建误差 | MSE(decoded_tokens, selected_tokens) |
-| **token_mse_sel** | 选中 token 平均 MSE | 对每个选中 token 的特征维做均值再 batch 平均 |
-| **token_cos_sim** | token 语义相似度 | cosine(decoded_tokens, selected_tokens) 的平均值（越高越好） |
-| **commit_loss** | VQ 约束损失 | `vq` / `rvq` 对应的 commitment 项 |
-| **loss** | 总损失 | `token_weight*token_loss + commit_loss + entropy_weight*diversity_loss` |
+```bibtex
+@inproceedings{zhu2026dinolink,
+  title     = {DinoLink: A Token-Centric Representation Compression Framework
+               for Bandwidth-Constrained Collaborative V2X Perception},
+  author    = {Zhu, Tianle and Que, Haohua and Yao, Handong and Xu, Hongyi and Bao, Zhipeng},
+  booktitle = {IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  year      = {2026}
+}
+```
 
-### 2. VQ 压缩有效性（见下方说明）
+## Acknowledgements & License
 
-| 指标 | 含义 | 计算方式 |
-|------|------|----------|
-| **vq_utilization** | Codebook 利用率 | 本 batch 被用到的 code 数 / codebook_size，∈[0,1] |
-| **vq_perplexity** | 有效码数（熵的 exp） | 基于各 code 使用频率的熵，再 exp；越高表示码本用得越均匀 |
-| **vq_quant_error** | 量化误差 | MSE(z_enc, z_q)，量化前后 latent 的误差 |
-| **vq_active_codes** | 激活的 code 数 | 本 batch 里出现过的不同 code 数量 |
-
-### 3. 输出与可视化（Evaluation Matrix）
-
-- **训练**：每个 epoch 平均指标写入 `logs/{run_name}/metrics.txt`；每 `save_every` 个 epoch 保存：
-  - `attention_epoch*.png`
-  - `selection_epoch*.png`
-  - `token_matrices_epoch*.png`（Token MSE / VQ Error / Selection Mask）
-  - checkpoint
-- **测试**：全量数据平均后写入 `logs/{run_name}/test_metrics.txt`，并保存：
-  - `test_attention.png`
-  - `test_selection.png`
-  - `test_token_matrices.png`
-
-**总结**：评估完全基于「token 重建质量 + VQ 损失 + 码本利用情况」，没有引入下游任务或 FID。
-
-
-### 本地 / 相对路径
-
-Place images under `data_root` (or override with `--data_root`):
-
-- **nuScenes**: `data_root/samples/CAM_FRONT/` or `data_root/images/`
-- **Waymo**: `data_root/images/` or `data_root/camera_image/`
-- **COCO**: `data_root/train2017/` or `data_root/val2017/`
-
-If the path does not exist, the script falls back to dummy tensors for a quick sanity run.
-
-## VQ 压缩有效性 (Compression effectiveness)
-
-训练时每个 epoch 会计算并打印/写入日志的 VQ 指标：
-
-- **vq_utilization**: codebook 利用率 = 被用到的 code 数量 / codebook_size，越接近 1 说明码本利用越充分。
-- **vq_perplexity**: exp(entropy)，有效使用的 code 数量；越高表示码本使用越均匀、信息量越大。
-- **vq_quant_error**: 量化误差 MSE(z_enc, z_q)，越小表示 VQ 重建越准。
-- **vq_active_codes**: 当前 batch 中被激活的 code 数量。
-
-这些指标会写入 `logs/run_xx/metrics.txt`，便于评估 VQ 压缩是否有效（利用率与 perplexity 不宜长期接近 0，quant_error 应随训练下降）。
+Built on [DINOv2](https://github.com/facebookresearch/dinov2) and [DETR](https://github.com/facebookresearch/detr) (vendored under `third_party/detr`). Released under the MIT License; vendored DETR code retains its original Apache-2.0 license.

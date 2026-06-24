@@ -15,11 +15,11 @@ with open(log_path, "r") as f:
         if "test_loss" in d:
             test_loss.append(d["test_loss"])
         else:
-            test_loss.append(None)  # 没有就占位
+            test_loss.append(None)  # placeholder when missing
 
 plt.figure(figsize=(8, 5))
 plt.plot(epochs, train_loss, label="train_loss")
-# 只画有值的 test_loss
+# Only plot test_loss values that are present
 test_epochs = [e for e, v in zip(epochs, test_loss) if v is not None]
 test_vals   = [v for v in test_loss if v is not None]
 if test_epochs:

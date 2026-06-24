@@ -1,20 +1,20 @@
 # DinoLink: DINOv2 token extraction + selection + VQ
 # Model & selection (dinov2_name: base | large | giant)
-# dinov2_name 可改为 facebook/dinov2-with-registers-base 获得更干净的 attention（少 artifact）
-# dinov2_image_size: 224 → 256 patches; 448 → 1024 patches（更吃显存）
-# top_k: 选中的 token 数。latent grid 自动 = patch grid (image_size/14)^2
-#   256px → ~18×18=324 patches; 448px → 32×32=1024 patches
-#   top_k < 总 patch 数时，选中位置放 VQ token，其余位置填 0
+# dinov2_name can be changed to facebook/dinov2-with-registers-base for cleaner attention (fewer artifacts)
+# dinov2_image_size: 224 -> 256 patches; 448 -> 1024 patches (uses more GPU memory)
+# top_k: number of selected tokens. latent grid is automatically = patch grid (image_size/14)^2
+#   256px -> ~18x18=324 patches; 448px -> 32x32=1024 patches
+#   when top_k < total number of patches, selected positions get a VQ token and the rest are filled with 0
 model:
   dinov2_name: "facebook/dinov2-with-registers-base"
   dinov2_image_size: 448
   # top_k: 912  # effectively "all tokens" (clamped to current patch count)
-  top_k: 921 
+  top_k: 1024 
   selection: "attention"
 
 # Quantizer
-# z_dim: VQ 瓶颈维度。越接近 hidden_size(768) 信息损失越小，但压缩率降低
-# codebook_size: 越大表达力越强，但可能利用率低
+# z_dim: VQ bottleneck dimension. The closer to hidden_size(768), the less information loss, but the lower the compression ratio
+# codebook_size: larger means stronger expressive power, but utilization may be low
 quantizer:
   type: "rvq"    # "vq" | "rvq"
   # type: "none"    # "vq" | "rvq"
@@ -24,15 +24,15 @@ quantizer:
   num_quantizers: 2  # only for rvq
 
 # Decoder: TokenDecoder
-# 每个 VQ token 直接解码回 DINO token 空间（hidden_size）
+# Each VQ token is decoded directly back into the DINO token space (hidden_size)
 decoder:
   type: "token"
-  hidden_dim: 768               # token decoder 的 MLP 隐层维度
-  use_pos: true                 # 拼接 (row, col) 位置先验到 decoder 输入
+  hidden_dim: 768               # MLP hidden layer dimension of the token decoder
+  use_pos: true                 # concatenate (row, col) positional prior to the decoder input
 
-# Data (本地 CAM_FRONT 目录)
-# image_size: 与 model.dinov2_image_size 一致时才是真正高分辨率
-# image_size: null → 原图送入，显存易 OOM（ViT attention O(N^2)）；224 安全，448 需更多显存
+# Data (local CAM_FRONT directory)
+# image_size: only truly high resolution when it matches model.dinov2_image_size
+# image_size: null -> original image is fed in, prone to GPU OOM (ViT attention O(N^2)); 224 is safe, 448 needs more GPU memory
 data:
   dataset: "nuscenes"   # "nuscenes" | "waymo" | "coco" (fallback)
   # data_root: "/mnt/datasets/nuScenes/sweeps/CAM_FRONT/"
@@ -46,7 +46,7 @@ data:
 
 # Training / run
 
-# token_weight: token 重建损失权重，默认 1.0
+# token_weight: weight of the token reconstruction loss, default 1.0
 run:
   epochs: 30
   lr: 2.0e-4

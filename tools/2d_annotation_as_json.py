@@ -169,15 +169,15 @@ def main(args):
 
     print("Generating 2D reprojections of the nuScenes dataset")
 
-    # Get tokens for all camera images whose原始图片实际存在于文件系统中。
+    # Get tokens for all camera images whose original images actually exist in the file system.
     sample_data_camera_tokens = []
     for s in nusc.sample_data:
         if s["sensor_modality"] != "camera" or not s["is_key_frame"]:
             continue
-        img_rel = s["filename"] if "filename" in s else s["fileformat"]  # devkit 使用 filename 字段
+        img_rel = s["filename"] if "filename" in s else s["fileformat"]  # devkit uses the filename field
         img_path = os.path.join(args.dataroot, img_rel)
         if not os.path.exists(img_path):
-            # 对缺图的 sample 直接跳过，避免生成无法可视化的结果
+            # Skip samples with missing images directly, to avoid generating results that cannot be visualized
             continue
         sample_data_camera_tokens.append(s["token"])
 

@@ -32,6 +32,55 @@ def _extract_vq_eval_metrics(outputs):
     return metrics
 
 
+def _extract_input_codec_metrics(targets):
+    if not isinstance(targets, (list, tuple)) or len(targets) == 0:
+        return {}
+    bpp_vals = [t.get("input_bpp") for t in targets if isinstance(t, dict) and "input_bpp" in t]
+    byte_vals = [t.get("input_bytes") for t in targets if isinstance(t, dict) and "input_bytes" in t]
+    if not bpp_vals:
+        return {}
+
+    def _scalar_mean(vals):
+        ts = []
+        for v in vals:
+            if isinstance(v, torch.Tensor):
+                if v.numel() == 1:
+                    ts.append(v.detach().float())
+            elif isinstance(v, (int, float)):
+                ts.append(torch.tensor(float(v), dtype=torch.float32))
+        if not ts:
+            return None
+        stacked = torch.stack(ts)
+        return float(stacked.mean().item())
+
+    bpp_mean = _scalar_mean(bpp_vals)
+    bytes_mean = _scalar_mean(byte_vals)
+    out = {}
+    if bpp_mean is not None:
+        out["input_bpp"] = bpp_mean
+    if bytes_mean is not None:
+        out["input_bytes"] = bytes_mean
+    return out
+
+
+def _estimate_result_bytes(results):
+    """Estimate serialized result bytes from tensor payloads in bbox results."""
+    if not isinstance(results, list) or len(results) == 0:
+        return None
+    per_image_bytes = []
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        total = 0
+        for v in r.values():
+            if isinstance(v, torch.Tensor):
+                total += int(v.numel()) * int(v.element_size())
+        per_image_bytes.append(float(total))
+    if not per_image_bytes:
+        return None
+    return float(sum(per_image_bytes) / len(per_image_bytes))
+
+
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0):
@@ -49,6 +98,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         outputs = model(samples)
         vq_metrics = _extract_vq_eval_metrics(outputs)
+        codec_metrics = _extract_input_codec_metrics(targets)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -79,6 +129,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         if vq_metrics:
             metric_logger.update(**vq_metrics)
+        if codec_metrics:
+            metric_logger.update(**codec_metrics)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
@@ -112,6 +164,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
 
         outputs = model(samples)
         vq_metrics = _extract_vq_eval_metrics(outputs)
+        codec_metrics = _extract_input_codec_metrics(targets)
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
 
@@ -127,9 +180,14 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         metric_logger.update(class_error=loss_dict_reduced['class_error'])
         if vq_metrics:
             metric_logger.update(**vq_metrics)
+        if codec_metrics:
+            metric_logger.update(**codec_metrics)
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
         results = postprocessors['bbox'](outputs, orig_target_sizes)
+        result_bytes = _estimate_result_bytes(results)
+        if result_bytes is not None:
+            metric_logger.update(result_bytes=result_bytes)
         if 'segm' in postprocessors.keys():
             target_sizes = torch.stack([t["size"] for t in targets], dim=0)
             results = postprocessors['segm'](results, outputs, orig_target_sizes, target_sizes)
