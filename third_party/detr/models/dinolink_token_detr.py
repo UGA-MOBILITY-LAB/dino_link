@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -196,13 +197,6 @@ class DinoLinkTokenDETR(nn.Module):
             )
             vq_eval["enabled"] = 1.0
 
-        rows = selected_indices // npw
-        cols = selected_indices % npw
-        row_norm = (rows.float() / max(nph - 1, 1)) * 2.0 - 1.0
-        col_norm = (cols.float() / max(npw - 1, 1)) * 2.0 - 1.0
-        patch_pos = torch.stack([row_norm, col_norm], dim=-1)
-        decoded_tokens = self.token_decoder(z_q_st, patch_pos=patch_pos)
-
         num_patches_total = nph * npw
         bits_pos = math.ceil(math.log2(max(num_patches_total, 2)))
         if self.quantizer is not None:
@@ -219,7 +213,19 @@ class DinoLinkTokenDETR(nn.Module):
         vq_eval["npw"] = float(npw)
         vq_eval["selected_indices"] = selected_indices.detach()
 
-        return decoded_tokens, selected_indices, nph, npw, vq_eval
+        return z_q_st, selected_indices, nph, npw, vq_eval
+
+    @staticmethod
+    def _now_s(device_like) -> float:
+        if torch.is_tensor(device_like):
+            device = device_like.device
+        elif isinstance(device_like, torch.device):
+            device = device_like
+        else:
+            device = torch.device("cpu")
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        return time.perf_counter()
 
     # NOTE: Dead code (kept commented for reference).
     # The current token-only path feeds ALL DINO tokens (K can be 1024) into the
@@ -260,7 +266,7 @@ class DinoLinkTokenDETR(nn.Module):
     #         ],
     #         dim=1,
     #     )
-    #     # Transformer 的 key padding mask: True 表示忽略该 token。
+    #     # Transformer key padding mask: True means ignore that token.
     #     padding_mask = ~valid
     #     return fitted, padding_mask
 
@@ -293,7 +299,7 @@ class DinoLinkTokenDETR(nn.Module):
     #     nph: int,
     #     npw: int,
     # ) -> Dict[str, torch.Tensor]:
-    #     # 1. 从 DINO token 构造 encoder 的 src/pos/mask
+    #     # 1. Build the encoder's src/pos/mask from DINO tokens
     #     b = tokens_3d.shape[0]
     #     src_proj = self.token_proj(tokens_3d).transpose(0, 1)  # [Q, B, C]
     #     fitted_indices, mask_flattened = self._fit_num_queries_indices(selected_indices)
@@ -316,7 +322,7 @@ class DinoLinkTokenDETR(nn.Module):
     #     query_embed = self.detr.query_embed.weight.unsqueeze(1).repeat(1, b, 1)
     #     tgt = torch.zeros_like(query_embed)
 
-    #     # 4. Transformer decoder (tgt 从全 0 开始)
+    #     # 4. Transformer decoder (tgt starts from all zeros)
     #     hs = self.detr.transformer.decoder(
     #         tgt=tgt,
     #         memory=memory,
@@ -350,7 +356,7 @@ class DinoLinkTokenDETR(nn.Module):
 
     def _head_forward(
         self,
-        decoded_tokens: torch.Tensor,
+        z_q_st: torch.Tensor,
         selected_indices: torch.Tensor,
         nph: int,
         npw: int,
@@ -358,10 +364,18 @@ class DinoLinkTokenDETR(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Args:
-            decoded_tokens: [B, K, token_dim]  — ALL selected DINO tokens (K can be 1024)
+            z_q_st: [B, K, z_dim]               — quantized (or identity) latent tokens
             selected_indices: [B, K]           — their 1-D patch indices
         """
-        b, k, _ = decoded_tokens.shape
+        b, k, _ = z_q_st.shape
+
+        # Server-side decode stage: latent tokens -> DINO token space.
+        rows = selected_indices // npw
+        cols = selected_indices % npw
+        row_norm = (rows.float() / max(nph - 1, 1)) * 2.0 - 1.0
+        col_norm = (cols.float() / max(npw - 1, 1)) * 2.0 - 1.0
+        patch_pos = torch.stack([row_norm, col_norm], dim=-1)
+        decoded_tokens = self.token_decoder(z_q_st, patch_pos=patch_pos)
 
         # 1. Encoder memory: ALL K DINO tokens → [K, B, hidden_dim]
         src_proj = self.token_proj(decoded_tokens).transpose(0, 1)
@@ -425,9 +439,22 @@ class DinoLinkTokenDETR(nn.Module):
             samples = nested_tensor_from_tensor_list(samples)
 
         img = self._to_images(samples)
-        decoded_tokens, selected_indices, nph, npw, vq_eval = self._run_dinolink(img)
-
-        return self._head_forward(decoded_tokens, selected_indices, nph, npw, vq_eval=vq_eval)
+        timed = not self.training
+        if timed:
+            t0 = self._now_s(img)
+        z_q_st, selected_indices, nph, npw, vq_eval = self._run_dinolink(img)
+        if timed:
+            t1 = self._now_s(img)
+        out = self._head_forward(z_q_st, selected_indices, nph, npw, vq_eval=vq_eval)
+        if timed:
+            t2 = self._now_s(img)
+            edge_compute_s = float(t1 - t0)
+            server_compute_s = float(t2 - t1)
+            # All-local compute is edge stage + server-stage compute on one device.
+            vq_eval["edge_compute_s"] = edge_compute_s
+            vq_eval["server_compute_s"] = server_compute_s
+            vq_eval["all_local_compute_s"] = edge_compute_s + server_compute_s
+        return out
         
 def build_dinolink_token_model(args):
     if getattr(args, "masks", False):

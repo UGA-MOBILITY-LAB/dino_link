@@ -26,6 +26,9 @@ LINK_PRESETS = {
     "4G": (10.0, 20.0, 50.0),
     "5G": (50.0, 200.0, 20.0),
     "WiFi": (30.0, 100.0, 15.0),
+    # Practical placeholder presets for long-range links.
+    "Satellite": (5.0, 50.0, 600.0),
+    "LoRa": (0.005, 0.005, 2000.0),
 }
 
 # Image upload codec presets, expressed as ratio to raw bytes (H*W*C).
@@ -71,7 +74,7 @@ def parse_args() -> argparse.Namespace:
         "--links",
         type=str,
         default="2G,3G,4G,5G,WiFi",
-        help="Comma-separated link names from {2G,3G,4G,5G,WiFi}",
+        help="Comma-separated link names from {2G,3G,4G,5G,WiFi,Satellite,LoRa}",
     )
     parser.add_argument(
         "--all_local_compute_s",
@@ -138,6 +141,41 @@ def parse_args() -> argparse.Namespace:
         "--use_dinov2_size_for_image",
         action="store_true",
         help="Use model.dinov2_image_size from config as image H/W for all-server upload bytes",
+    )
+    parser.add_argument(
+        "--all_server_upload_only_diff",
+        action="store_true",
+        help=(
+            "If set, enforce All_Server = All_Local + upload_image_s "
+            "(ignore RTT/download/server compute delta for all-server branch)."
+        ),
+    )
+    parser.add_argument(
+        "--all_server_use_local_compute",
+        action="store_true",
+        help=(
+            "If set, enforce All_Server = upload_image_s + RTT + all_local_compute_s + download_result_s "
+            "(use local compute as server compute proxy)."
+        ),
+    )
+    parser.add_argument(
+        "--y_cap",
+        type=float,
+        default=0.0,
+        help=(
+            "If >0, cap plotted bar heights at this y-value for readability. "
+            "Capped bars are labeled with '~value'."
+        ),
+    )
+    parser.add_argument(
+        "--y_log",
+        action="store_true",
+        help="Use log scale on y-axis.",
+    )
+    parser.add_argument(
+        "--hide_all_local",
+        action="store_true",
+        help="Hide All_Local bars in the latency plot.",
     )
     return parser.parse_args()
 
@@ -212,6 +250,8 @@ def simulate(
     all_server_compute_s: float,
     edge_partition_compute_s: float,
     server_partition_compute_s: float,
+    all_server_upload_only_diff: bool = False,
+    all_server_use_local_compute: bool = False,
 ) -> List[Dict[str, float]]:
     rows: List[Dict[str, float]] = []
     for link in links:
@@ -223,7 +263,12 @@ def simulate(
         download_result_s = transmission_time_s(result_bytes, dl)
 
         all_local_s = all_local_compute_s
-        all_server_s = upload_image_s + rtt_s + all_server_compute_s + download_result_s
+        if all_server_upload_only_diff:
+            all_server_s = all_local_s + upload_image_s
+        elif all_server_use_local_compute:
+            all_server_s = upload_image_s + rtt_s + all_local_s + download_result_s
+        else:
+            all_server_s = upload_image_s + rtt_s + all_server_compute_s + download_result_s
         partition_s = (
             edge_partition_compute_s
             + upload_partition_s
@@ -265,9 +310,17 @@ def save_csv(path: Path, rows: List[Dict[str, float]]) -> None:
         writer.writerows(rows)
 
 
-def draw_bar(path: Path, rows: List[Dict[str, float]], title: str) -> None:
+def draw_bar(
+    path: Path,
+    rows: List[Dict[str, float]],
+    title: str,
+    y_cap: float = 0.0,
+    y_log: bool = False,
+    hide_all_local: bool = False,
+) -> None:
     try:
         import matplotlib.pyplot as plt
+        from matplotlib.ticker import FuncFormatter, LogLocator
     except ModuleNotFoundError as e:
         raise ModuleNotFoundError(
             "matplotlib is required for plotting. "
@@ -279,34 +332,91 @@ def draw_bar(path: Path, rows: List[Dict[str, float]], title: str) -> None:
     all_local = [r["all_local_s"] for r in rows]
     all_server = [r["all_server_s"] for r in rows]
     partition = [r["partition_s"] for r in rows]
+    use_cap = y_cap is not None and float(y_cap) > 0.0
+    y_cap = float(y_cap)
+    if use_cap:
+        all_local_plot = [min(v, y_cap) for v in all_local]
+        all_server_plot = [min(v, y_cap) for v in all_server]
+        partition_plot = [min(v, y_cap) for v in partition]
+    else:
+        all_local_plot = all_local
+        all_server_plot = all_server
+        partition_plot = partition
 
-    x = range(len(labels))
-    width = 0.25
-    fig, ax = plt.subplots(figsize=(9.5, 4.8))
+    x = list(range(len(labels)))
+    width = 0.28
+    fig, ax = plt.subplots(figsize=(10.2, 5.4))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
 
-    b1 = ax.bar([i - width for i in x], all_local, width=width, label="All_Local")
-    b2 = ax.bar(list(x), all_server, width=width, label="All_Server")
-    b3 = ax.bar([i + width for i in x], partition, width=width, label="Partition")
+    c_local = "#4C78A8"
+    c_server = "#F58518"
+    c_part = "#54A24B"
+    if hide_all_local:
+        series = [
+            ("All_Server", c_server, all_server_plot, all_server, -width / 2),
+            ("Partition", c_part, partition_plot, partition, width / 2),
+        ]
+    else:
+        series = [
+            ("All_Local", c_local, all_local_plot, all_local, -width),
+            ("All_Server", c_server, all_server_plot, all_server, 0.0),
+            ("Partition", c_part, partition_plot, partition, width),
+        ]
 
-    ax.set_ylabel("Latency (s)")
-    ax.set_xlabel("Communication link")
-    ax.set_title(title)
+    bars_with_raw = []
+    for name, color, plot_vals, raw_vals, x_offset in series:
+        bars = ax.bar(
+            [i + x_offset for i in x],
+            plot_vals,
+            width=width,
+            label=name,
+            color=color,
+            edgecolor="white",
+            linewidth=0.8,
+            alpha=0.95,
+        )
+        bars_with_raw.append((bars, raw_vals))
+
+    ax.set_ylabel("Latency (s)", fontsize=18)
+    ax.set_xlabel("Communication Link", fontsize=18)
     ax.set_xticks(list(x))
-    ax.set_xticklabels(labels)
-    ax.legend()
-    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    ax.set_xticklabels(labels, fontsize=16)
+    ax.tick_params(axis="y", labelsize=16)
+    ax.tick_params(axis="x", length=0)
+    ax.legend(
+        fontsize=15,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=2 if hide_all_local else 3,
+        frameon=False,
+    )
+    if y_log:
+        ax.set_yscale("log")
+        ax.yaxis.set_major_locator(LogLocator(base=10.0))
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.grid(axis="y", linestyle="--", linewidth=0.8, alpha=0.35)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    if use_cap:
+        ax.axhline(y=y_cap, color="gray", linestyle="--", linewidth=1.0, alpha=0.8)
 
-    for bars in (b1, b2, b3):
-        for rect in bars:
+    for bars, raw_vals in bars_with_raw:
+        for rect, raw in zip(bars, raw_vals):
             h = rect.get_height()
+            raw_floor_2 = math.floor(raw * 100.0) / 100.0
+            if use_cap and raw > y_cap:
+                label_text = f"~{raw_floor_2:.2f}"
+            else:
+                label_text = f"{raw_floor_2:.2f}"
             ax.annotate(
-                f"{h:.3f}",
+                label_text,
                 xy=(rect.get_x() + rect.get_width() / 2, h),
                 xytext=(0, 3),
                 textcoords="offset points",
                 ha="center",
                 va="bottom",
-                fontsize=8,
+                fontsize=13,
             )
 
     fig.tight_layout()
@@ -360,6 +470,8 @@ def main() -> None:
         all_server_compute_s=float(args.all_server_compute_s),
         edge_partition_compute_s=float(args.edge_partition_compute_s),
         server_partition_compute_s=float(args.server_partition_compute_s),
+        all_server_upload_only_diff=bool(args.all_server_upload_only_diff),
+        all_server_use_local_compute=bool(args.all_server_use_local_compute),
     )
 
     out_png = Path(args.output_png)
@@ -371,7 +483,14 @@ def main() -> None:
         f"top_k={int(detail['top_k'])}, bits/token={int(detail['bits_per_token'])}, "
         f"partition_payload={partition_payload_bytes:.1f}B, image_bytes={image_bytes:.1f}B ({image_bytes_mode})"
     )
-    draw_bar(out_png, rows, title)
+    draw_bar(
+        out_png,
+        rows,
+        title,
+        y_cap=float(args.y_cap),
+        y_log=bool(args.y_log),
+        hide_all_local=bool(args.hide_all_local),
+    )
 
     print("=== Simulation Summary ===")
     print(f"config: {cfg_path}")
@@ -380,6 +499,7 @@ def main() -> None:
     print(f"raw_image_bytes: {raw_image_bytes:.1f}")
     print(f"image_codec: {args.image_codec}")
     print(f"codec_scale: {float(args.codec_scale):.3f}")
+    print(f"result_bytes: {float(args.result_bytes):.1f}")
     print(f"image_bytes_mode: {image_bytes_mode}")
     if args.image_bytes <= 0:
         print(f"effective_codec_ratio: {codec_ratio:.5f}")

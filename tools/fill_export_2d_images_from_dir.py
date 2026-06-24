@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-基于 export_2d/image_annotations.json，把对应图片按 basename
-从你指定的图片目录里拷贝/软链接到 export_2d/images 下。
+Based on export_2d/image_annotations.json, copy/symlink the corresponding images
+by basename from the image directory you specify into export_2d/images.
 
-使用场景：
-- image_annotations.json 里有 filename（含路径），但实际图片集中放在某个目录，
-  比如你把 `/mnt/datasets/nuScenes/samples/CAM_FRONT/*.jpg` 软链接到了别的地方。
-- 这个脚本只按文件名（basename）匹配，不依赖原始路径。
-- 加 --random-sample 时，从 JSON 要求的图片里随机取一部分填充（数量或比例）。
+Use case:
+- image_annotations.json contains filename (with path), but the actual images are
+  stored together in some directory, e.g. you symlinked
+  `/mnt/datasets/nuScenes/samples/CAM_FRONT/*.jpg` to somewhere else.
+- This script only matches by file name (basename), not relying on the original path.
+- With --random-sample, randomly take a portion of the images required by the JSON to fill (count or ratio).
 
-示例：
-  # 填充全部
+Examples:
+  # Fill all
   python tools/fill_export_2d_images_from_dir.py \\
     --json datasets/nuscenes/export_2d/image_annotations.json \\
     --images-src /real/path/to/all_cam_images \\
     --out-dir datasets/nuscenes/export_2d/images \\
     --symlink
 
-  # 随机取 500 张
+  # Randomly take 500 images
   python tools/fill_export_2d_images_from_dir.py ... --random-sample 500 --symlink
 
-  # 随机取 20% 比例
+  # Randomly take 20% ratio
   python tools/fill_export_2d_images_from_dir.py ... --random-sample 0.2 --symlink
 """
 
@@ -41,7 +42,7 @@ def index_images_by_basename(root: Path) -> Dict[str, Path]:
             if not f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp")):
                 continue
             p = Path(r) / f
-            # 若有重名，后出现的覆盖前面的，一般 basename 在 nuScenes 里是唯一的
+            # If there are duplicate names, later ones overwrite earlier ones; generally basename is unique in nuScenes
             mapping[f] = p
     return mapping
 
@@ -54,37 +55,37 @@ def main() -> int:
         "--json",
         type=str,
         default="/home/tianle/dinolink_project/datasets/nuscenes/export_2d/image_annotations.json",
-        help="export_2d image_annotations.json 路径。",
+        help="Path to export_2d image_annotations.json.",
     )
     parser.add_argument(
         "--images-src",
         type=str,
         required=True,
-        help="实际存放图片的目录（会递归搜索 jpg/png 等）。按文件名（basename）匹配。",
+        help="Directory where images are actually stored (searched recursively for jpg/png etc.). Matched by file name (basename).",
     )
     parser.add_argument(
         "--out-dir",
         type=str,
         default="/home/tianle/dinolink_project/datasets/nuscenes/export_2d/images",
-        help="要把图片放到的目录（不存在会创建）。",
+        help="Directory to place the images into (created if it does not exist).",
     )
     parser.add_argument(
         "--symlink",
         action="store_true",
-        help="使用软链接而不是复制（节省磁盘，推荐）。",
+        help="Use symlinks instead of copying (saves disk space, recommended).",
     )
     parser.add_argument(
         "--random-sample",
         type=float,
         default=None,
         metavar="N_or_FRAC",
-        help="随机取：填整数为数量（如 500），填 (0,1] 小数为比例（如 0.2 表示 20%%）。不传则填充全部。",
+        help="Random sample: an integer is a count (e.g. 500), a decimal in (0,1] is a ratio (e.g. 0.2 means 20%%). If not given, fill all.",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=None,
-        help="随机种子，便于复现。",
+        help="Random seed, for reproducibility.",
     )
     args = parser.parse_args()
 
@@ -102,10 +103,10 @@ def main() -> int:
     with open(json_path, "r") as f:
         anns = json.load(f)
 
-    # image_annotations.json 是列表，每条有 filename
+    # image_annotations.json is a list, each entry has a filename
     basenames: List[str] = list({os.path.basename(rec["filename"]) for rec in anns})
 
-    # 随机取：按数量或比例
+    # Random sample: by count or ratio
     if args.random_sample is not None:
         if args.seed is not None:
             random.seed(args.seed)
@@ -115,7 +116,7 @@ def main() -> int:
         elif 0 < args.random_sample <= 1:
             k = max(1, int(n_total * args.random_sample))
         else:
-            raise ValueError("--random-sample 应为正整数（数量）或 (0,1] 小数（比例）。")
+            raise ValueError("--random-sample should be a positive integer (count) or a decimal in (0,1] (ratio).")
         basenames = random.sample(basenames, k)
         print(f"Random sample: using {k} of {n_total} images (seed={args.seed}).")
     else:
@@ -127,7 +128,7 @@ def main() -> int:
 
     copied = 0
     skipped = 0
-    # 随机顺序处理（若未指定 --random-sample 则先 shuffle 再处理，避免固定顺序）
+    # Process in random order (if --random-sample is not specified, shuffle first before processing to avoid a fixed order)
     order = list(basenames)
     if args.random_sample is None and args.seed is not None:
         random.seed(args.seed)
@@ -142,7 +143,7 @@ def main() -> int:
 
         dst = out_dir / base
         if dst.exists():
-            # 已存在就跳过（不覆盖）
+            # Skip if it already exists (do not overwrite)
             continue
 
         if args.symlink:

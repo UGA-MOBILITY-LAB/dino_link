@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-从 image_annotations.json 中只保留：
-  - visibility_token 为 "3" 或 "4"
-  - category 属于 10 类（car, pedestrian, barrier, truck, trafficcone, construction, motorcycle, bus, bicycle, trailer），
-    并将 category_name 统一为上述短名。
+From image_annotations.json, keep only:
+  - visibility_token equal to "3" or "4"
+  - category belonging to the 10 classes (car, pedestrian, barrier, truck, trafficcone, construction, motorcycle, bus, bicycle, trailer),
+    and normalize category_name to the short names above.
 
-输出：
-  1) 过滤后的列表 JSON（与输入格式相同）。
-  2) 若指定 --coco-dir：在该目录下生成 COCO 格式 train/val 划分（annotations/instances_*.json），
-     并可选的 train2017/、val2017/ 图片目录（从 --images-dir 按 basename 软链或复制，见 --copy-images）。
+Output:
+  1) The filtered list JSON (same format as the input).
+  2) If --coco-dir is specified: generate a COCO-format train/val split under that directory (annotations/instances_*.json),
+     and optionally train2017/, val2017/ image directories (symlinked or copied from --images-dir by basename, see --copy-images).
 """
 
 import argparse
@@ -19,7 +19,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-# 固定 10 类顺序（与 export_2d_*_top10_vis34 一致），id 1~10
+# Fixed order of the 10 classes (consistent with export_2d_*_top10_vis34), id 1~10
 COCO_TOP10_CATEGORIES = [
     {"id": 1, "name": "car", "supercategory": "object"},
     {"id": 2, "name": "pedestrian", "supercategory": "object"},
@@ -34,7 +34,7 @@ COCO_TOP10_CATEGORIES = [
 ]
 SHORT_NAME_TO_CID = {c["name"]: c["id"] for c in COCO_TOP10_CATEGORIES}
 
-# nuScenes category_name 前缀 -> 10 类短名（与 export_2d_train_coco_second_level_top10_vis34 一致）
+# nuScenes category_name prefix -> short names of the 10 classes (consistent with export_2d_train_coco_second_level_top10_vis34)
 NUSCENES_TO_TOP10 = [
     ("vehicle.car", "car"),
     ("human.pedestrian", "pedestrian"),
@@ -50,8 +50,8 @@ NUSCENES_TO_TOP10 = [
 
 
 def map_category(name: str) -> Optional[str]:
-    """若属于 10 类之一则返回短名，否则返回 None（应丢弃）。
-    支持：1) 已是短名（car, bus, ...）；2) nuScenes 长名（vehicle.car, human.pedestrian, ...）。
+    """Return the short name if it belongs to one of the 10 classes, otherwise return None (should be discarded).
+    Supports: 1) already a short name (car, bus, ...); 2) nuScenes long name (vehicle.car, human.pedestrian, ...).
     """
     if not name:
         return None
@@ -69,7 +69,7 @@ def _build_coco_split(
     width: int,
     height: int,
 ) -> Tuple[List[dict], List[dict], List[dict]]:
-    """从过滤后的列表和本 split 的 filename 顺序构建 COCO images/annotations。"""
+    """Build COCO images/annotations from the filtered list and the filename order of this split."""
     fn_to_im_id = {fn: (i + 1) for i, fn in enumerate(filename_order)}
     images = []
     for fn, im_id in fn_to_im_id.items():
@@ -111,7 +111,7 @@ def _write_coco_and_link(
     images_dir: Optional[Path],
     copy_images: bool = False,
 ) -> None:
-    """划分 train/val，写 annotations/instances_*.json，可选建 train2017/val2017（软链或复制）。"""
+    """Split into train/val, write annotations/instances_*.json, optionally create train2017/val2017 (symlink or copy)."""
     unique_fns = list({ann["filename"] for ann in filtered})
     if seed is not None:
         random.seed(seed)
@@ -251,7 +251,7 @@ def main() -> int:
         short = map_category(ann.get("category_name", ""))
         if short is None:
             continue
-        # 保留原记录结构，只改 category_name 为短名
+        # Keep the original record structure, only change category_name to the short name
         rec = dict(ann)
         rec["category_name"] = short
         filtered.append(rec)

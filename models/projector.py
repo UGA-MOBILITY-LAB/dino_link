@@ -7,7 +7,7 @@ import torch.nn as nn
 class Projector(nn.Module):
     """
     Linear(hidden_size, z_dim) + LayerNorm(z_dim).
-    LayerNorm 稳定 z_enc 尺度，避免 commit_loss 爆炸。
+    LayerNorm stabilizes the scale of z_enc to prevent commit_loss from exploding.
     """
 
     def __init__(self, hidden_size: int, z_dim: int):

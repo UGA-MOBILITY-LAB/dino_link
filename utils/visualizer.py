@@ -42,7 +42,7 @@ class Visualizer:
         else:
             attn_2d = np.asarray(attention_scores, dtype=np.float64)
         if normalize and attn_2d.size > 0:
-            # Percentile-based scale: 避免整体偏暗，让相对高 attention 的区域更明显（vmax=98th 百分位）
+            # Percentile-based scale: avoid an overall dark image and make relatively high-attention regions more visible (vmax=98th percentile)
             vmax = float(np.percentile(attn_2d, 98))
             vmin = float(attn_2d.min())
             if vmax > vmin:

@@ -289,7 +289,7 @@ def load_checkpoint(ckpt_path_or_dict, modules: dict,
     if "projector" in ckpt:
         modules["projector"].load_state_dict(ckpt["projector"])
     else:
-        # 兼容旧 ckpt（proj + proj_norm）
+        # Compatible with old ckpt (proj + proj_norm)
         if "proj" in ckpt:
             modules["projector"].linear.load_state_dict(ckpt["proj"])
         if "proj_norm" in ckpt:
@@ -320,7 +320,7 @@ def load_checkpoint(ckpt_path_or_dict, modules: dict,
 # ---------------------------------------------------------------------------
 
 def run_train(cfg: dict, args, device: torch.device):
-    # 未指定 --run_name 时默认用运行时间，如 run_20250203_143052
+    # When --run_name is not specified, default to the run time, e.g. run_20250203_143052
     run_name = args.run_name or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     log_dir = cfg["run"].get("log_dir", "logs")
     run_dir = Path(log_dir) / run_name

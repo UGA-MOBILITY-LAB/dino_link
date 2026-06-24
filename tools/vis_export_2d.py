@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-可视化 nuScenes devkit 导出的 2D 标注（image_annotations.json）。
+Visualize the 2D annotations exported by the nuScenes devkit (image_annotations.json).
 
-只依赖：
-- image_annotations.json（含 filename, bbox_corners, category_name）
-- 一个实际存放图片的目录（按 basename 匹配），例如 datasets/nuscenes/export_2d/images
+Only depends on:
+- image_annotations.json (contains filename, bbox_corners, category_name)
+- a directory where images are actually stored (matched by basename), e.g. datasets/nuscenes/export_2d/images
 """
 
 import argparse
@@ -60,7 +60,7 @@ def main():
     with open(args.json, "r") as f:
         ann_list = json.load(f)
 
-    # 按 basename 分组，避免依赖原始路径（samples/CAM_FRONT/...）
+    # Group by basename to avoid relying on the original path (samples/CAM_FRONT/...)
     anns_by_base = defaultdict(list)
     for ann in ann_list:
         base = os.path.basename(ann["filename"])
@@ -115,10 +115,10 @@ if __name__ == "__main__":
 
 #!/usr/bin/env python3
 """
-可视化 nuScenes devkit 导出的 2D 标注（export_2d_annotations_as_json.py 的输出）。
+Visualize the 2D annotations exported by the nuScenes devkit (output of export_2d_annotations_as_json.py).
 
-读取 image_annotations.json，按照其中的 filename + bbox_corners 画框，
-并将可视化结果保存到指定输出目录。
+Read image_annotations.json, draw boxes according to its filename + bbox_corners,
+and save the visualization results to the specified output directory.
 """
 
 import argparse
@@ -138,7 +138,7 @@ def _index_images_by_basename(images_dir: str):
         for f in files:
             if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp")):
                 path = os.path.join(root, f)
-                # 重名时后者覆盖，通常 basename 在 nuScenes 里唯一
+                # On duplicate names the latter overwrites; usually basename is unique in nuScenes
                 out[f] = path
     return out
 
@@ -153,23 +153,23 @@ def visualize_2d_annotations(
     with open(json_path, "r") as f:
         ann_list = json.load(f)
 
-    # 按图片分组
+    # Group by image
     anns_by_file = defaultdict(list)
     for ann in ann_list:
-        filename = ann["filename"]  # 例如 samples/CAM_FRONT/xxx.jpg
+        filename = ann["filename"]  # e.g. samples/CAM_FRONT/xxx.jpg
         bbox = ann["bbox_corners"]  # [x1, y1, x2, y2]
         cat = ann.get("category_name", "")
         anns_by_file[filename].append((bbox, cat))
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # 若指定了 images_dir，建立 basename -> 绝对路径 的索引
+    # If images_dir is specified, build an index of basename -> absolute path
     basename_to_path = None
     if images_dir and os.path.isdir(images_dir):
         basename_to_path = _index_images_by_basename(images_dir)
         print(f"Images-dir: found {len(basename_to_path)} images under {images_dir} (lookup by basename).")
 
-    # 排序保证可重复
+    # Sort to ensure reproducibility
     items = sorted(anns_by_file.items())
     if max_images > 0:
         items = items[:max_images]
@@ -196,9 +196,9 @@ def visualize_2d_annotations(
 
         for bbox, cat in boxes:
             x1, y1, x2, y2 = bbox
-            # 画框
+            # Draw box
             draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
-            # 画类别文本
+            # Draw category text
             if cat:
                 text = str(cat)
                 if font:
@@ -206,7 +206,7 @@ def visualize_2d_annotations(
                 else:
                     draw.text((x1 + 2, y1 + 2), text, fill="yellow")
 
-        # 输出文件名沿用原始文件名结构，放到 out_dir 中
+        # Output file name follows the original file name structure, placed in out_dir
         out_path = os.path.join(out_dir, os.path.basename(rel_path))
         img.save(out_path)
         print(f"[{idx}] Saved: {out_path}")

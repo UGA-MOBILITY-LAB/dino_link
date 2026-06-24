@@ -1,6 +1,23 @@
+# data & experiment artifacts
 logs/
 datasets/
 outputs/
 work_dirs/
+
+# model checkpoints
+third_party/detr/checkpoints/
+*.pt
+*.pth
+
+# corrupt-git backup (local only)
+.git_corrupt_backup/
+
+# editor / build junk
+.vscode/
 __pycache__/
 *.pyc
+
+# misc
+*.pdf
+*_backup.py
+*copy_backup*.py

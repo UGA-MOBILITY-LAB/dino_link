@@ -21,7 +21,7 @@ import datasets
 import util.misc as utils
 from datasets import build_dataset
 from models import build_model
-from main import get_args_parser  # 复用官方的参数定义，避免缺少字段
+from main import get_args_parser  # reuse the official argument definitions to avoid missing fields
 
 # High-contrast nuScenes-style palette (RGB tuples).
 NUSC_COLOR_PALETTE = [
@@ -45,7 +45,7 @@ def class_color(class_idx: int):
 
 
 def main():
-    # 复用 main.py 里的 get_args_parser，确保和官方脚本参数完全一致
+    # reuse get_args_parser from main.py to keep arguments exactly consistent with the official script
     parser = argparse.ArgumentParser('DETR prediction visualization', parents=[get_args_parser()])
     parser.add_argument('--vis_out_dir', type=str, default=None,
                         help='Directory to save visualization images (default: coco_path/vis_detr)')
@@ -135,7 +135,7 @@ def main():
     for batch in tqdm(data_loader, desc="Vis"):
         samples, targets = batch
         samples = samples.to(device)
-        # 将 target 也移到同一 device，保持与 engine.evaluate 一致，避免 device mismatch
+        # move target to the same device as well, consistent with engine.evaluate, to avoid device mismatch
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         orig_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
 

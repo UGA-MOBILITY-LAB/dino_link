@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# 为官方 DETR 的 --coco_path 创建适配目录，使 nuScenes COCO 格式 val 可被正确找到。
-# DETR 要求: coco_path/annotations/instances_val2017.json, coco_path/val2017/<file_name>
-# 你的 val.json 里 file_name 为 samples/CAM_FRONT/xxx.jpg，故 val2017 指到 nuScenes 根目录即可。
+# Create an adapter directory for the official DETR --coco_path so the nuScenes COCO-format val can be found correctly.
+# DETR requires: coco_path/annotations/instances_val2017.json, coco_path/val2017/<file_name>
+# In your val.json the file_name is samples/CAM_FRONT/xxx.jpg, so val2017 just needs to point to the nuScenes root directory.
 
 set -e
 COCO_FOR_DETR="${1:-/home/tianle/dinolink_project/datasets/nuscenes/coco_for_detr}"

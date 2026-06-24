@@ -77,20 +77,20 @@ def compute_losses(
         z_enc_flat = z_enc.reshape(-1, z_dim)
         z_q_raw = quantizer.decode(indices)  # raw codebook vectors (fallback)
     
-    # --- 调试监控开始 ---
+    # --- debug monitoring start ---
     with torch.no_grad():
         z_enc_max = z_enc_flat.abs().max().item()
         z_q_max = z_q_raw.abs().max().item()
         if z_enc_max > 10 or z_q_max > 10:
-            print(f"!!! 数值异常警告 !!!")
+            print(f"!!! Numerical anomaly warning !!!")
             print(f"z_enc_flat -> max: {z_enc_max:.4f}, mean: {z_enc_flat.abs().mean():.4f}, shape: {z_enc_flat.shape}")
             print(f"z_q_raw    -> max: {z_q_max:.4f}, mean: {z_q_raw.abs().mean():.4f}, shape: {z_q_raw.shape}")
         
-        # 维度对齐检查（最重要！）
+        # Dimension alignment check (most important!)
         if z_enc_flat.shape != z_q_raw.shape:
-             # 如果这里报错，说明是 reshape 逻辑导致 MSE 计算了错误的均值
+             # If this triggers, it means the reshape logic caused the MSE to compute the wrong mean
              z_q_raw = z_q_raw.reshape(z_enc_flat.shape)
-             print(f"已强制对齐 z_q_raw 维度至: {z_q_raw.shape}")
+             print(f"Forced z_q_raw dimensions to align to: {z_q_raw.shape}")
 
 
     # Classic VQ-VAE loss (used by both VQ and RVQ):

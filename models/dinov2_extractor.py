@@ -60,7 +60,7 @@ class DINOv2Extractor(nn.Module):
             p.requires_grad = False
         self.backbone.eval()
         self.hidden_size = self.backbone.config.hidden_size
-        # DINOv2 with Registers: 序列为 [CLS, reg1..regN, patch1..patchK]，只取 patch 部分
+        # DINOv2 with Registers: the sequence is [CLS, reg1..regN, patch1..patchK]; take only the patch part
         self.num_register_tokens = getattr(self.backbone.config, "num_register_tokens", 0)
         self.register_buffer("_mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1))
         self.register_buffer("_std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1))
@@ -107,7 +107,7 @@ class DINOv2Extractor(nn.Module):
         patch_tokens = last_hidden[:, start:end, :]
         attentions = out.attentions
         if attentions is not None:
-            # 最后 4 层: CLS(0) -> patch 部分 [start:end]，对层和 head 取平均
+            # Last 4 layers: CLS(0) -> patch part [start:end], averaged over layers and heads
             n_layers = min(4, len(attentions))
             layer_scores = []
             for attn in attentions[-n_layers:]:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 用 export_2d（export_2d_coco.json + images/）搭建 DETR 的 --coco_path 目录。
-# COCO 里 file_name 为 images/xxx.jpg，故 val2017 指向 export_2d，这样 val2017/images/xxx.jpg 存在。
+# Build DETR's --coco_path directory using export_2d (export_2d_coco.json + images/).
+# In COCO the file_name is images/xxx.jpg, so val2017 points to export_2d, making val2017/images/xxx.jpg exist.
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
